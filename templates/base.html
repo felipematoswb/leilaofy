@@ -1,0 +1,60 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <title>{% block title %}Meu Site de Imóveis{% endblock %}</title>
+
+    <!-- Estilos Globais -->
+    <link rel="stylesheet" href="{% static 'css/main.css' %}">
+
+    <!-- Bloco para estilos específicos da página -->
+    {% block styles %}{% endblock %}
+
+    <!-- Carrega o HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+
+    <header style="background-color: #fff; padding: 0 20px; border-bottom: 1px solid var(--border-color); height: 75px; display: flex; align-items: center;">
+        <nav class="container" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+            <a href="{% url 'mapa-imoveis' %}" style="font-size: 1.5rem; font-weight: bold; text-decoration: none; color: var(--primary-color);">
+                LeilaoFy
+            </a>
+            <ul style="list-style: none; margin: 0; padding: 0; display: flex; gap: 20px; align-items: center;">
+                <li><a href="{% url 'mapa-imoveis' %}" style="text-decoration: none; color: var(--text-color);">Mapa</a></li>
+                {% if user.is_authenticated %}
+                    <li><a href="{% url 'favoritos_page' %}" style="text-decoration: none; color: var(--text-color);">Meus Favoritos</a></li>
+                    <li>
+                        <form id="logout-form" action="{% url 'account_logout' %}" method="post" style="margin: 0;">
+                            {% csrf_token %}
+                            <button type="submit" style="background: none; border: none; cursor: pointer; color: var(--text-color); font-size: 1em; padding: 0;">Sair</button>
+                        </form>
+                    </li>
+                {% else %}
+                    <li><a href="{% url 'account_login' %}" style="text-decoration: none; color: var(--text-color);">Entrar</a></li>
+                    <li><a href="{% url 'account_signup' %}" style="padding: 8px 15px; background-color: var(--primary-color); color: white; text-decoration: none; border-radius: 5px;">Criar Conta</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        {% block content %}
+        <!-- O conteúdo específico de cada página será inserido aqui -->
+        {% endblock %}
+    </main>
+
+    <footer style="background-color: #343a40; color: white; text-align: center; padding: 20px; margin-top: auto;">
+        <div class="container">
+            <p>&copy; {% now "Y" %} Meu Site de Imóveis. Todos os direitos reservados.</p>
+        </div>
+    </footer>
+
+    <!-- Bloco para scripts específicos da página -->
+    {% block scripts %}{% endblock %}
+
+</body>
+</html>

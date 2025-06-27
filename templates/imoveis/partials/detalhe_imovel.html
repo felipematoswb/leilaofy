@@ -1,0 +1,57 @@
+{% load humanize %}
+
+<div class="detail-view-container">
+    
+    <!-- Botão para voltar para a lista de resultados -->
+    <div class="back-button" 
+         hx-get="{% url 'lista-imoveis-partial' %}"
+         hx-target="#results-column"
+         hx-swap="innerHTML"
+         hx-indicator="#loading"
+         hx-vals='js:{"bbox": document.getElementById("bbox-input").value}'>
+        &larr; Voltar para a lista
+    </div>
+
+    <!-- Imagem e Informações -->
+    {% if imovel.image_url %}
+        <div class="detail-image" style="background-image: url('{{ imovel.image_url }}');"></div>
+    {% endif %}
+
+    <h3>{{ imovel.title }}</h3>
+    {% if imovel.amount %}
+        <h2 style="color: var(--primary-color);">R$ {{ imovel.amount|intcomma }}</h2>
+    {% endif %}
+    <p><i class="fas fa-map-marker-alt"></i> {{ imovel.address }}</p>
+    
+    <hr>
+    <h4>Descrição</h4>
+    <p>{{ imovel.descricao_detalhada|linebreaksbr|default:"Nenhuma descrição disponível." }}</p>
+
+    <h3>{{ imovel.nome_condominio|default:imovel.title }}</h3>
+    <p><strong>Número do Imóvel:</strong> {{ imovel.numero_imovel|default:"N/A" }}</p>
+    <p><strong>Endereço:</strong> {{ imovel.address|default:"Não informado" }}</p>
+    <p><strong>CEP:</strong> {{ imovel.cep|default:"N/A" }}</p>
+
+    <hr style="border: none; border-top: 1px solid #eee;">
+    <h4>Valores</h4>
+    <p><strong>Valor Mínimo de Venda:</strong> R$ {{ imovel.amount|intcomma }}</p>
+    <p><strong>Valor de Avaliação:</strong> R$ {{ imovel.valor_avaliacao|intcomma }}</p>
+
+    <hr style="border: none; border-top: 1px solid #eee;">
+    <h4>Características</h4>
+    <p><strong>Tipo:</strong> {{ imovel.tipo_imovel|default:"N/A" }} | <strong>Quartos:</strong> {{ imovel.quartos|default:"N/A" }} | <strong>Vagas:</strong> {{ imovel.garagem|default:"N/A" }}</p>
+    <p><strong>Área Total:</strong> {{ imovel.area_total|floatformat:2|default:'N/A' }} m² | <strong>Área Privativa:</strong> {{ imovel.area_privativa|floatformat:2|default:'N/A' }} m²</p>
+
+    <hr style="border: none; border-top: 1px solid #eee;">
+    <h4>Descrição</h4>
+    <p>{{ imovel.descricao_detalhada|default:imovel.description|linebreaksbr }}</p>
+
+    <hr style="border: none; border-top: 1px solid #eee;">
+    <h4>Informações do Leilão</h4>
+    <p><strong>Modalidade:</strong> {{ imovel.modalidade|default:"N/A" }}</p>
+    <p><strong>Edital:</strong> {{ imovel.edital|default:"N/A" }}</p>
+    <p><strong>Leiloeiro(a):</strong> {{ imovel.leiloeiro|default:"N/A" }}</p>
+    <p><strong>1º Leilão:</strong> {{ imovel.data_leilao_1|date:"d/m/Y \à\s H:i"|default:"N/A" }}</p>
+    <p><strong>2º Leilão:</strong> {{ imovel.data_leilao_2|date:"d/m/Y \à\s H:i"|default:"N/A" }}</p>
+
+</div>

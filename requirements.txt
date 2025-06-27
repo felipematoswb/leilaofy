@@ -1,0 +1,9 @@
+django
+requests
+beautifulsoup4
+geopy
+googlemaps
+django-allauth
+django-htmx
+python-decouple
+django-filter

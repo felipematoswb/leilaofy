@@ -1,0 +1,6 @@
+<span hx-post="{% url 'toggle-favorito' imovel.id %}"
+      hx-target="this"
+      hx-swap="outerHTML"
+      style="cursor: pointer;">
+    <i class="fa-heart favorite-icon {% if is_favorited %}fa-solid favorited{% else %}fa-regular{% endif %}"></i>
+</span>

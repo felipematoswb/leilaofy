@@ -29,8 +29,8 @@ LOCATIONIQ_API_KEY = config("LOCATIONIQ_API_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = ['ideal-tightly-pug.ngrok-free.app', '127.0.0.1', 'localhost']
+CSRF_TRUSTED_ORIGINS = ['https://ideal-tightly-pug.ngrok-free.app']
 
 # Application definition
 

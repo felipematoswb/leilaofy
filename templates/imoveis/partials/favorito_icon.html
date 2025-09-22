@@ -1,6 +1,15 @@
-<span hx-post="{% url 'toggle-favorito' imovel.id %}"
-      hx-target="this"
-      hx-swap="outerHTML"
-      style="cursor: pointer;">
-    <i class="fa-heart favorite-icon {% if is_favorited %}fa-solid favorited{% else %}fa-regular{% endif %}"></i>
-</span>
+{# imoveis/partials/favorito_icon.html #}
+<a href="#" 
+   class="favorite-icon" 
+   hx-post="{% url 'toggle-favorito' imovel.pk %}"
+   hx-target="this" 
+   hx-swap="outerHTML">
+    
+    {% if is_favorited %}
+        {# Show a solid heart if it's a favorite #}
+        <i class="fa-solid fa-heart" style="color: #e74c3c;"></i>
+    {% else %}
+        {# Show an empty heart if it's not #}
+        <i class="fa-regular fa-heart" style="color: #333;"></i>
+    {% endif %}
+</a>

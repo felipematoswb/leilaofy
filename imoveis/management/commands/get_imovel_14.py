@@ -1,7 +1,6 @@
 import re
 import time
 import random
-import hashlib
 import requests
 from bs4 import BeautifulSoup, Comment
 from datetime import datetime
@@ -9,13 +8,20 @@ from django.utils import timezone
 from django.core.management.base import BaseCommand
 from imoveis.models import Imovel
 from retrying import retry
+import warnings
+from urllib3.exceptions import InsecureRequestWarning
+
+# Suppress only the single InsecureRequestWarning from urllib3 needed for this script
+warnings.filterwarnings('ignore', category=InsecureRequestWarning)
 
 
 def parse_numero(text):
     '''Parse number from text.'''
     if not text:
         return None
+    # Clean the text to keep only digits, comma, and period
     cleaned_text = re.sub(r'[^\d,.]', '', text)
+    # Handle Brazilian format (e.g., 1.234,56) by removing periods and replacing comma
     if ',' in cleaned_text and '.' in cleaned_text:
         cleaned_text = cleaned_text.replace('.', '')
     cleaned_text = cleaned_text.replace(',', '.')
@@ -24,7 +30,7 @@ def parse_numero(text):
 
 
 def parse_data_leilao(text):
-    '''Parse date from text.'''
+    '''Parse date from text, trying multiple formats.'''
     if not text:
         return None
     formats = [
@@ -35,6 +41,7 @@ def parse_data_leilao(text):
     for fmt in formats:
         try:
             naive_dt = datetime.strptime(text, fmt)
+            # Make the datetime timezone-aware
             return timezone.make_aware(naive_dt)
         except ValueError:
             continue
@@ -44,20 +51,12 @@ def parse_data_leilao(text):
 
 @retry(stop_max_attempt_number=3, wait_exponential_multiplier=1000, wait_exponential_max=10000)
 def make_request(session, url, method='post', **kwargs):
-    '''Make HTTP request with retry mechanism.'''
-    response = session.request(method, url, **kwargs)
+    '''Make HTTP request with a retry mechanism.'''
+    # Disable SSL verification and pass other arguments
+    response = session.request(method, url, verify=False, **kwargs)
+    response.raise_for_status()  # Raise an exception for bad status codes
     return response
 
-
-# <option value='4'  >1º Leilão SFI </option>
-# <option value='5'  >2º Leilão SFI </option>
-# <option value='2'  >Concorrência Pública</option>
-# <option value='14'  >Leilão SFI - Edital Único</option>
-# <option value='21'  >Licitação Aberta</option>
-# <option value='9'  >Venda Direta FAR</option>
-# <option value='34'  >Venda Direta Online</option>
-# <option value='33'  >Venda Online </option>
-# <option value='30'  >Exercício de Direito de Preferência</option>
 
 class Command(BaseCommand):
     '''Script to get imoveis from Caixa.'''
@@ -81,14 +80,14 @@ class Command(BaseCommand):
         for estado in estados_brasil:
             self.stdout.write(self.style.SUCCESS(
                 f'Iniciando Busca no: {estado.upper()}...'))
+            # Note: hdn_tp_venda=14 corresponds to 'Leilão SFI - Edital Único'
             params = {'hdn_estado': estado, 'hdn_cidade': '',
                       'hdn_quartos': '', 'hdn_tp_venda': 14}
 
             try:
                 self.stdout.write('Etapa 1: Buscando lista completa de IDs...')
                 response = make_request(
-                    session, search_url, data=params, verify=False, timeout=60)
-                response.raise_for_status()
+                    session, search_url, data=params, timeout=60)
                 soup = BeautifulSoup(response.text, 'html.parser')
 
                 all_ids_raw = []
@@ -100,8 +99,8 @@ class Command(BaseCommand):
 
                 all_ids = sorted(list(set(filter(None, all_ids_raw))))
                 if not all_ids:
-                    self.stderr.write(self.style.ERROR(
-                        'Nenhum ID de imóvel encontrado. Abortando.'))
+                    self.stdout.write(self.style.WARNING(
+                        f'Nenhum ID de imóvel encontrado para o estado {estado}.'))
                     continue
                 self.stdout.write(self.style.SUCCESS(
                     f'Etapa 1 concluída. {len(all_ids)} IDs únicos encontrados.'))
@@ -110,19 +109,21 @@ class Command(BaseCommand):
                 chunk_size = 10
 
                 for i in range(0, len(all_ids), chunk_size):
-                    chunk = all_ids[i:i+chunk_size]
+                    chunk = all_ids[i:i + chunk_size]
                     self.stdout.write(self.style.HTTP_INFO(
-                        f'\n--- Processando lote {i//chunk_size + 1} ({len(chunk)} imóveis) / {len(all_ids)} ---'))
+                        f'\n--- Processando lote {i // chunk_size + 1} ({len(chunk)} imóveis) de {len(all_ids)} ---'
+                    ))
 
                     imoveis_str_chunk = '||'.join(chunk)
                     list_response = make_request(session, f"{base_url}/sistema/carregaListaImoveis.asp",
                                                  data={
                                                      'hdnImov': imoveis_str_chunk},
-                                                 headers={'Referer': search_url}, verify=False, timeout=60)
+                                                 headers={'Referer': search_url}, timeout=60)
                     list_soup = BeautifulSoup(
                         list_response.text, 'html.parser')
 
                     for item in list_soup.find_all('li', class_='group-block-item'):
+                        numero_imovel_raw = None
                         try:
                             desc_block_raw = item.find_all(
                                 'li', class_='form-row clearfix')[1].get_text(strip=False)
@@ -134,8 +135,8 @@ class Command(BaseCommand):
 
                             self.stdout.write(
                                 f"Processando imóvel ID: {numero_imovel_raw}")
-
                             time.sleep(random.uniform(0.5, 1.0))
+
                             imovel_id_numeric = re.sub(
                                 r'\D', '', numero_imovel_raw)
                             detail_response = make_request(session, detail_url, data={
@@ -145,217 +146,150 @@ class Command(BaseCommand):
 
                             dados_imovel_div = detail_soup.find(
                                 'div', id='dadosImovel')
+                            if not dados_imovel_div:
+                                self.stdout.write(self.style.WARNING(
+                                    f"Div 'dadosImovel' não encontrada para o ID {numero_imovel_raw}."))
+                                continue
+
+                            # --- Helper function for safe regex extraction ---
+                            def safe_extract(pattern, text):
+                                if not text:
+                                    return None
+                                match = re.search(
+                                    pattern, text, re.I | re.DOTALL)
+                                return match.group(1).strip() if match else None
 
                             defaults = {'numero_imovel': numero_imovel_raw}
-                            if dados_imovel_div:
-                                defaults['title'] = dados_imovel_div.find('h5').get_text(
-                                    strip=True) if dados_imovel_div.find('h5') else 'Título não encontrado'
-                                defaults['modalidade'] = 'Leilão SFI - Edital Único'
 
-                                p_prices = dados_imovel_div.find(
-                                    'p', style="font-size:14pt")
-                                if p_prices:
-                                    text_prices = p_prices.get_text()
-                                    defaults['valor_avaliacao'] = parse_numero(re.search(
-                                        r"Valor de avaliação: R\$ ([\d,.]+)", text_prices, re.I).group(1) if re.search(r"Valor de avaliação", text_prices, re.I) else None)
-                                    defaults['valor_venda_leilao_1'] = parse_numero(re.search(
-                                        r"Valor mínimo de venda 1º Leilão: R\$ ([\d,.]+)", text_prices, re.I).group(1) if re.search(r"1º Leilão", text_prices, re.I) else None)
-                                    defaults['valor_venda_leilao_2'] = parse_numero(re.search(
-                                        r"Valor mínimo de venda 2º Leilão: R\$ ([\d,.]+)", text_prices, re.I).group(1) if re.search(r"2º Leilão", text_prices, re.I) else None)
-                                    defaults['amount'] = defaults['valor_venda_leilao_1'] or defaults['valor_venda_leilao_2'] or parse_numero(
-                                        item.find_all('li', class_='form-row')[0].get_text(strip=True))
+                            defaults['title'] = dados_imovel_div.find('h5').get_text(
+                                strip=True) if dados_imovel_div.find('h5') else 'Título não encontrado'
+                            defaults['modalidade'] = 'Leilão SFI - Edital Único'
 
-                                content_div = dados_imovel_div.find(
-                                    'div', class_='content')
-                                if content_div:
-                                    for span in content_div.find_all('span'):
-                                        text = span.get_text(strip=True)
-                                        key, *value = text.split(':', 1)
-                                        value = value[0].strip(
-                                        ) if value else ''
-                                        strong_tag = span.find('strong')
-                                        strong_value = strong_tag.get_text(
-                                            strip=True) if strong_tag else value
-                                        if 'Tipo de imóvel' in key:
-                                            defaults['tipo_imovel'] = strong_value
-                                        elif 'Quartos' in key:
-                                            defaults['quartos'] = int(
-                                                re.sub(r'\D', '', strong_value)) if strong_value.isdigit() else None
-                                        elif 'Garagem' in key:
-                                            defaults['garagem'] = int(
-                                                re.sub(r'\D', '', strong_value)) if strong_value.isdigit() else None
-                                        elif 'Matrícula(s)' in key:
-                                            defaults['matricula'] = strong_value
-                                        elif 'Comarca' in key:
-                                            defaults['comarca'] = strong_value
-                                        elif 'Ofício' in key:
-                                            defaults['oficio'] = strong_value
-                                        elif 'Inscrição imobiliária' in key:
-                                            defaults['inscricao_imobiliaria'] = strong_value
-                                        elif 'Averbação dos leilões negativos' in key:
-                                            defaults['averbacao_leiloes_negativos'] = strong_value
-                                        elif 'Área total' in text:
-                                            defaults['area_total'] = parse_numero(
-                                                text)
-                                        elif 'Área privativa' in text:
-                                            defaults['area_privativa'] = parse_numero(
-                                                text)
-                                        elif 'Área do terreno' in text:
-                                            defaults['area_terreno'] = parse_numero(
-                                                text)
+                            if p_prices := dados_imovel_div.find('p', style="font-size:14pt"):
+                                text_prices = p_prices.get_text()
+                                defaults['valor_avaliacao'] = parse_numero(safe_extract(
+                                    r"Valor de avaliação: R\$ ([\d,.]+)", text_prices))
+                                defaults['valor_venda_leilao_1'] = parse_numero(safe_extract(
+                                    r"Valor mínimo de venda 1º Leilão: R\$ ([\d,.]+)", text_prices))
+                                defaults['valor_venda_leilao_2'] = parse_numero(safe_extract(
+                                    r"Valor mínimo de venda 2º Leilão: R\$ ([\d,.]+)", text_prices))
+                                defaults['amount'] = defaults.get('valor_venda_leilao_1') or defaults.get('valor_venda_leilao_2') or parse_numero(
+                                    item.find_all('li', class_='form-row')[0].get_text(strip=True))
 
-                                situacao_span = dados_imovel_div.find(
-                                    'span', string=re.compile(r"Situação:", re.I))
-                                if situacao_span:
-                                    strong_tag = situacao_span.find('strong')
-                                    defaults['situacao'] = strong_tag.get_text(
-                                        strip=True) if strong_tag else None
-                                else:
-                                    comments = detail_soup.find_all(
-                                        string=lambda text: isinstance(text, Comment))
-                                    for comment in comments:
-                                        if 'Situação:' in comment:
-                                            situacao_match = re.search(
-                                                r"<strong>(.*?)</strong>", comment, re.I)
-                                            if situacao_match:
-                                                defaults['situacao'] = situacao_match.group(
-                                                    1).strip()
-                                                break
+                            if content_div := dados_imovel_div.find('div', class_='content'):
+                                content_text = content_div.get_text(
+                                    separator=' ')
+                                for span in content_div.find_all('span'):
+                                    text = span.get_text(strip=True)
+                                    key, *value = text.split(':', 1)
+                                    value = value[0].strip() if value else ''
+                                    strong_value = span.find('strong').get_text(
+                                        strip=True) if span.find('strong') else value
 
-                                related_box = dados_imovel_div.find(
-                                    'div', class_='related-box')
-                                if related_box:
-                                    related_text = related_box.get_text(
-                                        separator='\n', strip=True)
-
-                                    defaults['edital'] = re.search(r"Edital: (.*?)\n", related_text, re.I).group(
-                                        1) if re.search(r"Edital:", related_text, re.I) else None
-                                    defaults['numero_item'] = re.search(r"Número do item: (\d+)", related_text, re.I).group(
-                                        1) if re.search(r"Número do item:", related_text, re.I) else None
-                                    defaults['leiloeiro'] = re.search(r"Leiloeiro\(a\): (.*?)\n", related_text, re.I).group(
-                                        1) if re.search(r"Leiloeiro\(a\):", related_text, re.I) else None
-                                    defaults['data_leilao_1'] = parse_data_leilao(re.search(
-                                        r"Data do 1º Leilão - (.*?)\n", related_text, re.I).group(1) if re.search(r"1º Leilão -", related_text, re.I) else None)
-                                    defaults['data_leilao_2'] = parse_data_leilao(re.search(
-                                        r"Data do 2º Leilão - (.*?)\n", related_text, re.I).group(1) if re.search(r"2º Leilão -", related_text, re.I) else None)
-
-                                    edital_publicacao = None
-                                    patterns = [
-                                        r"Edital publicado em: (\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})",
-                                        r"Edital publicado em: (\d{2}/\d{2}/\d{4} \d{2}:\d{2})",
-                                        r"Publicado em: (\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})",
-                                        r"Data de publicação: (\d{2}/\d{2}/\d{4} \d{2}:\d{2}:\d{2})",
-                                    ]
-                                    for pattern in patterns:
-                                        match = re.search(
-                                            pattern, related_text, re.I)
-                                        if match:
-                                            edital_publicacao = match.group(1)
-                                            break
-                                    if not edital_publicacao:
-                                        pub_span = related_box.find('span', string=re.compile(
-                                            r"(Edital publicado em|Publicado em|Data de publicação)", re.I))
-                                        if pub_span:
-                                            pub_text = pub_span.get_text(
-                                                strip=True)
-                                            for pattern in patterns:
-                                                match = re.search(
-                                                    pattern, pub_text, re.I)
-                                                if match:
-                                                    edital_publicacao = match.group(
-                                                        1)
-                                                    break
-                                    if not edital_publicacao:
-                                        pub_text = detail_soup.get_text(
-                                            separator=' ', strip=True)
-                                        for pattern in patterns:
-                                            match = re.search(
-                                                pattern, pub_text, re.I)
-                                            if match:
-                                                edital_publicacao = match.group(
-                                                    1)
-                                                break
-                                    if edital_publicacao:
-                                        defaults['data_publicacao_edital'] = parse_data_leilao(
-                                            edital_publicacao)
-
-                                    related_text_full = related_box.get_text(
-                                        separator=' ', strip=True)
-                                    formas_pagamento_match = re.search(
-                                        r"FORMAS DE PAGAMENTO.*?((?:Recursos próprios|Exclusivamente à vista).*?)(?:REGRAS PARA PAGAMENTO DAS DESPESAS|$)", related_text_full, re.I | re.DOTALL)
-                                    regras_despesas_match = re.search(
-                                        r"REGRAS PARA PAGAMENTO DAS DESPESAS.*?((?:Condomínio|Tributos).*?)(?:\s*$|\s*FORMAS DE PAGAMENTO)", related_text_full, re.I | re.DOTALL)
-
-                                    if formas_pagamento_match:
-                                        defaults['formas_pagamento'] = formas_pagamento_match.group(
-                                            1).strip()
-
-                                    if regras_despesas_match:
-                                        defaults['regras_despesas'] = regras_despesas_match.group(
-                                            1).strip()
-
-                                    desc_tag = related_box.find(
-                                        'strong', string=re.compile("Descrição:"))
-                                    if desc_tag and hasattr(desc_tag.next_sibling, 'next_sibling'):
-                                        defaults['descricao_detalhada'] = desc_tag.next_sibling.next_sibling.strip(
+                                    if 'Tipo de imóvel' in key:
+                                        defaults['tipo_imovel'] = strong_value
+                                    elif 'Quartos' in key:
+                                        defaults['quartos'] = int(
+                                            re.sub(r'\D', '', strong_value)) if strong_value.isdigit() else None
+                                    elif 'Garagem' in key:
+                                        defaults['garagem'] = int(
+                                            re.sub(r'\D', '', strong_value)) if strong_value.isdigit() else None
+                                    elif 'Matrícula(s)' in key:
+                                        defaults['matricula'] = strong_value
+                                    elif 'Comarca' in key:
+                                        defaults['comarca'] = strong_value
+                                    elif 'Ofício' in key:
+                                        defaults['oficio'] = strong_value
+                                    elif 'Inscrição imobiliária' in key:
+                                        defaults['inscricao_imobiliaria'] = strong_value
+                                    elif 'Averbação dos leilões negativos' in key:
+                                        defaults['averbacao_leiloes_negativos'] = strong_value.strip(
                                         )
 
-                                    addr_tag = related_box.find(
-                                        'strong', string=re.compile("Endereço:"))
-                                    if addr_tag and hasattr(addr_tag.next_sibling, 'next_sibling'):
-                                        full_addr = addr_tag.next_sibling.next_sibling.strip()
+                                defaults['area_total'] = parse_numero(safe_extract(
+                                    r'Área total\s*=\s*([\d,.]+)m2', content_text))
+                                defaults['area_privativa'] = parse_numero(safe_extract(
+                                    r'Área privativa\s*=\s*([\d,.]+)m2', content_text))
+                                defaults['area_terreno'] = parse_numero(safe_extract(
+                                    r'Área do terreno\s*=\s*([\d,.]+)m2', content_text))
+
+                            # Robust situation extraction (including from HTML comments)
+                            situacao_match = re.search(
+                                r"Situação:.*?<strong>(.*?)</strong>", detail_response.text.replace('', ''), re.I | re.DOTALL)
+                            if situacao_match:
+                                defaults['situacao'] = situacao_match.group(
+                                    1).strip()
+
+                            if related_box := dados_imovel_div.find('div', class_='related-box'):
+                                related_text_lines = related_box.get_text(
+                                    separator='\n', strip=True)
+                                related_text_full = related_box.get_text(
+                                    separator=' ', strip=True)
+
+                                defaults['edital'] = safe_extract(
+                                    r"Edital: (.*?)\n", related_text_lines)
+                                defaults['numero_item'] = safe_extract(
+                                    r"Número do item: (\d+)", related_text_lines)
+                                defaults['leiloeiro'] = safe_extract(
+                                    r"Leiloeiro\(a\): (.*?)\n", related_text_lines)
+                                defaults['data_leilao_1'] = parse_data_leilao(
+                                    safe_extract(r"Data do 1º Leilão - (.*?)\n", related_text_lines))
+                                defaults['data_leilao_2'] = parse_data_leilao(
+                                    safe_extract(r"Data do 2º Leilão - (.*?)\n", related_text_lines))
+                                defaults['data_publicacao_edital'] = parse_data_leilao(safe_extract(
+                                    r"publicado em: (\d{2}/\d{2}/\d{4}\s\d{2}:\d{2}:\d{2})", related_text_full))
+
+                                defaults['formas_pagamento'] = safe_extract(
+                                    r"FORMAS DE PAGAMENTO ACEITAS: (.*?)(?:REGRAS PARA PAGAMENTO|$)", related_text_full)
+                                defaults['regras_despesas'] = safe_extract(
+                                    r"REGRAS PARA PAGAMENTO DAS DESPESAS.*?:\s(.*?)(?:FORMAS DE PAGAMENTO|$)", related_text_full)
+
+                                if desc_tag := related_box.find('strong', string=re.compile("Descrição:")):
+                                    if hasattr(desc_tag.next_sibling, 'next_sibling') and (desc_text := desc_tag.next_sibling.next_sibling.strip()):
+                                        defaults['descricao_detalhada'] = desc_text if desc_text != '.' else None
+
+                                if addr_tag := related_box.find('strong', string=re.compile("Endereço:")):
+                                    if hasattr(addr_tag.next_sibling, 'next_sibling') and (full_addr := addr_tag.next_sibling.next_sibling.strip()):
                                         defaults['address'] = full_addr
-                                        defaults['cep'] = re.search(
-                                            r"CEP: ([\d-]+)", full_addr).group(1) if re.search(r"CEP:", full_addr) else None
+                                        defaults['cep'] = safe_extract(
+                                            r"CEP: ([\d-]+)", full_addr)
 
-                                hdn_imovel = dados_imovel_div.find(
-                                    'input', id='hdnimovel')
-                                if hdn_imovel:
-                                    defaults['hdn_imovel_id'] = hdn_imovel.get(
-                                        'value')
+                            if hdn_imovel := dados_imovel_div.find('input', id='hdnimovel'):
+                                defaults['hdn_imovel_id'] = hdn_imovel.get(
+                                    'value')
 
-                                link_matricula_tag = detail_soup.find(
-                                    'a', onclick=re.compile("ExibeDoc.*matricula"))
-                                if link_matricula_tag:
-                                    path = re.search(
-                                        r"ExibeDoc\('(.*?)'\)", link_matricula_tag['onclick']).group(1)
-                                    defaults['link_matricula'] = f"{base_url}{path}"
+                            if link_matricula_tag := detail_soup.find('a', onclick=re.compile("ExibeDoc.*matricula")):
+                                defaults['link_matricula'] = f"{base_url}{safe_extract(r"ExibeDoc\('(.*?)'\)", link_matricula_tag['onclick'])}"
 
-                                link_edital_tag = detail_soup.find(
-                                    'a', onclick=re.compile("ExibeDoc.*PDF"))
-                                if link_edital_tag:
-                                    path = re.search(
-                                        r"ExibeDoc\('(.*?)'\)", link_edital_tag['onclick']).group(1)
-                                    defaults['link_edital'] = f"{base_url}{path}"
+                            if link_edital_tag := detail_soup.find('a', onclick=re.compile("ExibeDoc.*PDF")):
+                                defaults['link_edital'] = f"{base_url}{safe_extract(r"ExibeDoc\('(.*?)'\)", link_edital_tag['onclick'])}"
 
-                                leiloeiro_button = detail_soup.find(
-                                    'button', onclick=re.compile("SiteLeiloeiro"))
-                                if leiloeiro_button:
-                                    domain = re.search(
-                                        r"SiteLeiloeiro\(\"(.*?)\"\)", leiloeiro_button['onclick']).group(1)
+                            if leiloeiro_button := detail_soup.find('button', onclick=re.compile("SiteLeiloeiro")):
+                                if domain := safe_extract(r"SiteLeiloeiro\(\"(.*?)\"\)", leiloeiro_button['onclick']):
                                     defaults['site_leiloeiro'] = f"http://{domain}"
 
-                                if galeria := detail_soup.find('div', id='galeria-imagens'):
-                                    defaults['fotos'] = [f"{base_url}{img.get('src')}" for img in galeria.find_all(
-                                        'img') if img.get('src')]
+                            if galeria := detail_soup.find('div', id='galeria-imagens'):
+                                defaults['fotos'] = [f"{base_url}{img.get('src')}" for img in galeria.find_all(
+                                    'img') if img.get('src')]
 
-                                defaults['description'] = desc_block_raw.strip().split('\n')[
-                                    0].strip()
-                                if img_tag := item.find('div', class_='fotoimovel-col1').find('img'):
-                                    defaults['image_url'] = f"{base_url}{img_tag.get('src')}"
-                                defaults['source_url'] = f"{detail_url}?hdnImovel={imovel_id_numeric}"
+                            defaults['description'] = desc_block_raw.strip().split('\n')[
+                                0].strip()
+                            if img_tag := item.find('div', class_='fotoimovel-col1').find('img'):
+                                defaults['image_url'] = f"{base_url}{img_tag.get('src')}"
+                            defaults['source_url'] = f"{detail_url}?hdnImovel={imovel_id_numeric}"
 
-                                final_defaults = {
-                                    k: v for k, v in defaults.items() if v is not None}
-                                slug = Imovel.create_slug(defaults.get('title'), defaults.get(
-                                    'description'), defaults.get('amount'))
+                            # Remove keys with None values before saving
+                            final_defaults = {
+                                k: v for k, v in defaults.items() if v is not None}
+                            slug = Imovel.create_slug(defaults.get('title'), defaults.get(
+                                'description'), defaults.get('amount'))
 
-                                obj, created = Imovel.objects.update_or_create(
-                                    slug=slug, defaults=final_defaults)
-                                if created:
-                                    imoveis_criados_total += 1
-                                else:
-                                    imoveis_atualizados_total += 1
+                            obj, created = Imovel.objects.update_or_create(
+                                slug=slug, defaults=final_defaults)
+                            if created:
+                                imoveis_criados_total += 1
+                            else:
+                                imoveis_atualizados_total += 1
 
                         except Exception as e:
                             self.stdout.write(self.style.ERROR(
@@ -366,7 +300,15 @@ class Command(BaseCommand):
                     time.sleep(2)
 
                 self.stdout.write(self.style.SUCCESS(
-                    f'\nScraping unificado concluído! Criados: {imoveis_criados_total}. Atualizados: {imoveis_atualizados_total}.'))
+                    f'\nScraping para {estado} concluído! Criados: {imoveis_criados_total}. Atualizados: {imoveis_atualizados_total}.'
+                ))
 
             except requests.exceptions.RequestException as e:
-                self.stderr.write(self.style.ERROR(f'Erro fatal de rede: {e}'))
+                self.stderr.write(self.style.ERROR(
+                    f'Erro fatal de rede ao processar {estado}: {e}'))
+            except Exception as e:
+                self.stderr.write(self.style.ERROR(
+                    f'Um erro inesperado ocorreu em {estado}: {e}'))
+
+        self.stdout.write(self.style.SUCCESS(
+            '\nProcesso de scraping unificado concluído para todos os estados!'))

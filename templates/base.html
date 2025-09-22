@@ -26,7 +26,7 @@
             <ul style="list-style: none; margin: 0; padding: 0; display: flex; gap: 20px; align-items: center;">
                 <li><a href="{% url 'mapa-imoveis' %}" style="text-decoration: none; color: var(--text-color);">Mapa</a></li>
                 {% if user.is_authenticated %}
-                    <li><a href="{% url 'favoritos_page' %}" style="text-decoration: none; color: var(--text-color);">Meus Favoritos</a></li>
+                    <li><a href="{% url 'favoritos-page' %}" style="text-decoration: none; color: var(--text-color);">Meus Favoritos</a></li>
                     <li>
                         <form id="logout-form" action="{% url 'account_logout' %}" method="post" style="margin: 0;">
                             {% csrf_token %}
@@ -53,6 +53,11 @@
         </div>
     </footer>
 
+    <script>
+        document.body.addEventListener('htmx:configRequest', function(evt) {
+            evt.detail.headers['X-CSRFToken'] = '{{ csrf_token }}';
+        });
+    </script>
     <!-- Bloco para scripts específicos da página -->
     {% block scripts %}{% endblock %}
 

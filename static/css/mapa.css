@@ -1,90 +1,155 @@
 .page-container {
-  display: grid;
-  grid-template-columns: 450px 500px 1fr; /* Coluna 1 (Filtro), Coluna 2 (Resultados), Coluna 3 (Mapa) */
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  height: calc(100vh - 75px); /* Altura total da tela menos o header */
-  overflow: hidden; /* Previne barras de rolagem na página inteira */
+  min-height: calc(100vh - 75px); /* Altura da viewport menos o header */
 }
 
 #filter-column {
+  padding: 15px;
+  border-bottom: 1px solid var(--border-color);
   background-color: #fff;
-  border-right: 1px solid var(--border-color);
-  padding: 20px;
-  margin: 10px;
-  overflow-y: auto; /* Permite rolar apenas os filtros se forem muitos */
 }
 
 #results-column {
   background-color: #f9f9f9;
-  border-right: 1px solid var(--border-color);
-  overflow-y: auto; /* ESSENCIAL: Permite rolar a lista de imóveis ou os detalhes */
+  flex-grow: 1;
+  overflow-y: auto;
 }
 
 #map-column {
-  background-color: #e9eef2;
-  position: relative;
-  padding: 5px;
+  display: none;
 }
 
+#map-column.visible {
+  display: block;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 4000;
+}
+
+#toggle-map-btn {
+  display: flex;
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  width: 60px;
+  height: 60px;
+  background-color: var(--primary-color);
+  color: white;
+  border-radius: 50%;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  z-index: 3500;
+  cursor: pointer;
+}
+
+#close-map-btn {
+  display: none;
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  width: 40px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.8);
+  color: #333;
+  border-radius: 50%;
+  justify-content: center;
+  align-items: center;
+  font-size: 1.8rem;
+  font-weight: bold;
+  z-index: 4001;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+}
+
+#map-column.visible #close-map-btn {
+  display: flex;
+}
+
+/* Tablet (e telas maiores) - Layout de 2 colunas */
+@media (min-width: 768px) {
+  .page-container {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    height: calc(100vh - 75px);
+    overflow: hidden;
+  }
+  #toggle-map-btn {
+    display: none;
+  }
+  #map-column {
+    display: block;
+    position: relative;
+    height: 100%;
+  }
+  #filter-column {
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+  }
+  #sidebar-container {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    border-right: 1px solid var(--border-color);
+  }
+  #results-column {
+    border-right: none;
+  }
+}
+
+/* Desktop (telas grandes) - Layout de 3 colunas */
+@media (min-width: 1200px) {
+  .page-container {
+    grid-template-columns: 300px 350px 1fr;
+  }
+  #sidebar-container {
+    grid-column: span 2;
+    display: contents;
+  }
+  #filter-column {
+    border-right: 1px solid var(--border-color);
+  }
+  #results-column {
+    border-right: 1px solid var(--border-color);
+  }
+}
+
+/* Estilos dos componentes */
 #map {
   width: 100%;
   height: 100%;
-}
-
-/* --- ESTILOS DOS CARDS E DETALHES (AJUSTADOS) --- */
-.result-card {
-  display: flex;
-  padding: 15px;
-  border-bottom: 1px solid var(--border-color);
-  cursor: pointer;
-  transition: background-color 0.2s;
 }
 .result-card:hover,
 .result-card.highlight {
   background-color: #eef7ff;
 }
-.result-card .card-image {
-  width: 150px;
-  height: 100px;
+/* .result-card .card-image {
+  width: 120px;
+  height: 80px;
   object-fit: cover;
   border-radius: var(--border-radius);
   margin-right: 15px;
   background-color: #eee;
   flex-shrink: 0;
-}
+} */
 .result-card .card-info h5 {
   margin: 0 0 5px 0;
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
-
-.detail-view-container {
-  padding: 20px;
-}
-.detail-view-container .back-button {
-  margin-bottom: 20px;
-  cursor: pointer;
-  color: var(--primary-color);
-  font-weight: bold;
-}
-.detail-view-container .detail-image {
-  width: 100%;
-  height: 220px;
-  border-radius: var(--border-radius);
-  margin-bottom: 15px;
-  background-color: #eee;
-  background-size: cover;
-  background-position: center;
-}
-
-/* --- ESTILOS DO FORMULÁRIO DE FILTRO --- */
 .filter-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 15px;
-  margin-bottom: 15px;
+  gap: 10px;
+  margin-bottom: 10px;
 }
 .form-group {
-  margin-bottom: 15px;
+  margin-bottom: 10px;
 }
 .filter-input {
   width: 100%;
@@ -92,15 +157,14 @@
   box-sizing: border-box;
   border: 1px solid #ccc;
   border-radius: 5px;
+  font-size: 0.9em;
 }
 #filter-column label {
-  font-size: 0.9em;
+  font-size: 0.85em;
   font-weight: bold;
   margin-bottom: 5px;
   display: block;
 }
-
-/* --- ESTILOS DO AUTOCOMPLETE --- */
 .autocomplete-container {
   position: relative;
 }
@@ -118,7 +182,7 @@
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
 }
 .autocomplete-items div {
-  padding: 12px 15px;
+  padding: 10px 15px;
   cursor: pointer;
   background-color: #fff;
   border-bottom: 1px solid #f0f0f0;
@@ -126,4 +190,141 @@
 }
 .autocomplete-items div:hover {
   background-color: #eef7ff;
+}
+/* Estilo geral do card com a nova estrutura de duas colunas */
+/* Estilo geral do card: agora uma coluna flex para empilhar o header e o conteúdo */
+.result-card {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid var(--border-color);
+  /* border-radius: var(--border-radius); */
+  overflow: hidden;
+  margin-bottom: 15px;
+  height: auto; /* Altura agora é automática */
+}
+
+/* 1. HEADER DE ENDEREÇO */
+.card-header-address {
+  padding: 10px 15px;
+  background-color: #f8f9fa;
+  /* border-bottom: 1px solid var(--border-color); */
+  display: flex;
+  align-items: flex-start;
+  font-size: 0.6rem;
+  color: #495057;
+  line-height: 1.4;
+}
+.card-header-address i {
+  margin-right: 8px;
+  margin-top: 3px;
+  color: #6c757d;
+}
+/* Magia para limitar o endereço a 2 linhas com "..." */
+.card-header-address span {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 2. ÁREA DE CONTEÚDO PRINCIPAL (com as duas colunas) */
+.card-main-content {
+  display: flex;
+  flex-grow: 1;
+}
+
+/* COLUNA DA ESQUERDA (IMAGEM + TÍTULO) */
+.card-left-col {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 200px;
+  /* border-right: 1px solid var(--border-color); */
+}
+.card-image-container {
+  display: block;
+  height: 120px;
+  position: relative;
+}
+.card-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.card-title-bar {
+  padding: 8px 10px;
+  background: #fff;
+  border-top: 1px solid var(--border-color);
+  flex-grow: 1; /* Garante que ocupe o espaço restante */
+}
+.card-title {
+  margin: 0;
+  font-size: 0.7rem;
+}
+.card-tag-overlay {
+  /* Posição da tag "Ocupado" */
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 0.7rem;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 20px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: white;
+  z-index: 2;
+}
+.tag-ocupado {
+  background-color: #c0392b;
+}
+
+/* COLUNA DA DIREITA (DADOS) */
+.card-right-col {
+  display: flex;
+  flex-direction: column;
+  padding: 15px;
+  flex-grow: 1;
+  position: relative;
+  overflow: hidden;
+}
+.favorite-icon-wrapper {
+  /* Posição do ícone de favorito */
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  font-size: 1.5rem;
+}
+
+/* Lista de características */
+.card-specs-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 0.7rem;
+  color: #343a40;
+}
+.card-specs-list li {
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+}
+.card-specs-list .fa-fw {
+  margin-right: 8px;
+  color: #6c757d;
+}
+
+/* Footer com preço */
+.card-footer {
+  margin-top: auto; /* Empurra o footer para o fundo */
+  padding-top: 10px;
+  text-align: right;
+}
+.price {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin: 0;
 }

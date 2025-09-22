@@ -1,34 +1,56 @@
+{# imoveis/partials/lista_imoveis.html #}
 {% load humanize %}
 
 {% for imovel in imoveis %}
-    <a href="{% url 'imovel-detail-page' imovel.pk %}" target="_blank" rel="noopener noreferrer" style="text-decoration: none; color: inherit;">
-        <div class="result-card" 
-             data-imovel-id="{{ imovel.id }}"
-             data-lat="{{ imovel.latitude|default_if_none:'' }}" 
-             data-lng="{{ imovel.longitude|default_if_none:'' }}" 
-             data-title="{{ imovel.title|escapejs }}">
-            
-            <img src="{{ imovel.image_url|default:'https://placehold.co/300x200/e2e8f0/adb5bd?text=Sem+Foto' }}" alt="Foto de {{ imovel.title }}" class="card-image">
-            
-            <div class="card-info" style="width: 100%;">
-                <div style="display: flex; justify-content: space-between; align-items: start;">
-                    <h5>{{ imovel.title }}</h5>
-                    {% if user.is_authenticated %}
-                        {% include "imoveis/partials/favorito_icon.html" with imovel=imovel is_favorited=imovel.is_favorited %}
-                    {% endif %}
-                </div>
-                {% if imovel.amount %}
-                    <p style="font-size: 1.1rem; font-weight: bold; margin: 5px 0;">R$ {{ imovel.amount|intcomma }}</p>
+<div class="result-card" id="imovel-card-{{ imovel.pk }}" data-imovel-id="{{ imovel.pk }}">
+    
+    <div class="card-header-address">
+        <i class="fa-solid fa-location-dot fa-fw"></i>
+        <span>{{ imovel.address|default:"Endereço não informado" }}</span>
+    </div>
+
+    <div class="card-main-content">
+        
+        <div class="card-left-col">
+            <a href="{% url 'imovel-detail-page' imovel.pk %}" target="_blank" class="card-image-container">
+                <img src="{{ imovel.image_url|default:'https://via.placeholder.com/300x200.png?text=Sem+Foto' }}" alt="{{ imovel.title }}" class="card-image">
+                
+                {% if imovel.situacao %}
+                    <div class="card-tag-overlay {% if 'Ocupado' in imovel.situacao %}tag-ocupado{% endif %}">
+                        {{ imovel.situacao }}
+                    </div>
                 {% endif %}
-                <p style="font-size: 0.9em; color: #666; margin: 5px 0;">{{ imovel.address }}</p>
-                <div class="stats" style="display: flex; gap: 15px; margin-top: 10px; font-size: 0.9em;">
-                    <span><i class="fas fa-ruler-combined"></i> {{ imovel.area_total|floatformat:0|default:'--' }} m²</span>
-                    <span><i class="fas fa-bed"></i> {{ imovel.quartos|default:'--' }}</span>
-                    <span><i class="fas fa-car"></i> {{ imovel.garagem|default:'--' }}</span>
-                </div>
+            </a>
+            <div class="card-title-bar">
+                <h5 class="card-title">{{ imovel.tipo_imovel }}</h5>
+                <h5 class="card-title">{{ imovel.title }}</h5>
             </div>
         </div>
-    </a>
-{% empty %}
-    <p style="padding: 20px; text-align: center;">Nenhum imóvel encontrado para esta área.</p>
+
+        <div class="card-right-col">
+            {% if user.is_authenticated %}
+                <div class="favorite-icon-wrapper">
+                    {% include "imoveis/partials/favorito_icon.html" with imovel=imovel is_favorited=imovel.is_favorited %}
+                </div>
+            {% endif %}
+
+            <ul class="card-specs-list">
+                <li><i class="fa-solid fa-ruler-combined fa-fw"></i> 
+                {% if imovel.area_total %} {{ imovel.area_total|floatformat:0 }} m² {% else %} Sem Info {% endif %}
+            </li>
+                <li><i class="fa-solid fa-bed fa-fw"></i> {% if imovel.quartos %} {{ imovel.quartos }} quarto(s) {% else %} Sem Info {% endif %}</li>
+                <li><i class="fa-solid fa-car fa-fw"></i> {% if imovel.garagem %} {{ imovel.garagem }} vaga(s) {% else %} Sem Info {% endif %}</li>
+            </ul>
+
+            <div class="card-footer">
+                <p class="price">R$ {{ imovel.amount|intcomma }}</p>
+            </div>
+        </div>
+
+    </div>
+</div>
 {% endfor %}
+
+{% if not imoveis %}
+    <p style="padding: 20px;">Nenhum imóvel encontrado para os filtros selecionados.</p>
+{% endif %}

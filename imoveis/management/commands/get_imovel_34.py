@@ -1,7 +1,6 @@
 import re
 import time
 import random
-import hashlib
 import requests
 from bs4 import BeautifulSoup, Comment
 from datetime import datetime

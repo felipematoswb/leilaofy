@@ -32,6 +32,8 @@ class Imovel(models.Model):
     data_leilao_2 = models.DateTimeField(null=True)
     descricao_detalhada = models.TextField(null=True)
     address = models.TextField(null=True)
+    estado = models.CharField(max_length=2, null=True,
+                              blank=True, db_index=True)
     cep = models.CharField(max_length=20, null=True)
     link_venda_online = models.URLField(null=True)  # Novo campo
     link_formas_pagamento = models.URLField(null=True)
@@ -54,6 +56,11 @@ class Imovel(models.Model):
     def create_slug(title, description, amount):
         slug_base = f"{title}-{description}-{amount}" if title and description and amount else f"imovel-{random.randint(1, 10000)}"
         return hashlib.md5(slug_base.encode()).hexdigest()[:255]
+
+    def get_city(self):
+        '''get city from address'''
+        # SP = SAO PAULO
+        return self.address.split('-')[1] if self.address else None
 
     class Meta:
         verbose_name = "Imóvel"

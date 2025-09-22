@@ -10,34 +10,73 @@ from .models import BuscaSalva, Imovel, Favorito
 
 
 def mapa_view(request):
-    """Renderiza a página principal do mapa."""
-    # A view agora só precisa passar os filtros para o template, se houver
-    context = {
-        'filter_form_data': request.GET
-    }
-    return render(request, 'imoveis/mapa.html', context)
+    """Renderiza a página principal do mapa com o formulário."""
+    return render(request, 'imoveis/mapa.html')
 
 
 def lista_imoveis_partial(request):
-    """View que retorna APENAS o HTML da lista de imóveis para o HTMX."""
-    imovel_filter = ImovelFilter(
-        request.GET, queryset=Imovel.objects.filter(
-            latitude__isnull=False, longitude__isnull=False)
-    )
+    """
+    Retorna a lista de imóveis em HTML para a barra lateral,
+    incluindo o status de favorito de cada um.
+    """
+    imovel_filter = ImovelFilter(request.GET, queryset=Imovel.objects.all())
+    imoveis_filtrados = imovel_filter.qs[:100]
 
+    # --- EFFICIENT FAVORITE CHECKING ----
     favorited_ids = set()
+    # Only run the query if the user is logged in
     if request.user.is_authenticated:
         favorited_ids = set(Favorito.objects.filter(
-            usuario=request.user).values_list('imovel_id', flat=True))
+            usuario=request.user
+        ).values_list('imovel_id', flat=True))
 
-    imoveis_filtrados = imovel_filter.qs
+    # Add a new attribute to each property object
     for imovel in imoveis_filtrados:
         imovel.is_favorited = imovel.id in favorited_ids
+    # --- END OF FAVORITE CHECKING ---
 
     context = {
         'imoveis': imoveis_filtrados,
     }
     return render(request, 'imoveis/partials/lista_imoveis.html', context)
+
+
+def imoveis_geojson_view(request):
+    """
+    Retorna os dados dos imóveis em formato GeoJSON para o mapa.
+    Esta é a "API" para o Leaflet.
+    """
+    # Reutilizamos o mesmo ImovelFilter para garantir que o mapa e a lista fiquem em sincronia
+    imovel_filter = ImovelFilter(request.GET, queryset=Imovel.objects.all())
+
+    # Limite de segurança para não enviar dados demais para o mapa
+    imoveis_no_mapa = imovel_filter.qs.exclude(
+        latitude__isnull=True, longitude__isnull=True)[:500]
+
+    # Monta a estrutura GeoJSON
+    features = []
+    for imovel in imoveis_no_mapa:
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [imovel.longitude, imovel.latitude]
+            },
+            "properties": {
+                "id": imovel.id,
+                "title": imovel.title,
+                "price": imovel.amount,
+                "image_url": imovel.image_url,
+                "detail_url": imovel.source_url
+            }
+        })
+
+    geojson_data = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+
+    return JsonResponse(geojson_data)
 
 
 @login_required
@@ -126,7 +165,6 @@ def geocode_autocomplete_api(request):
     """
     query = request.GET.get('text', '')
 
-    # Não busca se o texto for muito curto
     if not query or len(query) < 3:
         return JsonResponse([], safe=False)
 
@@ -135,9 +173,7 @@ def geocode_autocomplete_api(request):
         if not api_key:
             return JsonResponse({'error': 'API Key não configurada'}, status=500)
 
-        # Endpoint da API de Autocomplete da Geoapify
         url = "https://api.geoapify.com/v1/geocode/autocomplete"
-
         params = {
             'text': query,
             'apiKey': api_key,
@@ -147,21 +183,21 @@ def geocode_autocomplete_api(request):
         }
 
         response = requests.get(url, params=params, timeout=5)
-        response.raise_for_status()  # Lança um erro para status HTTP ruins
-
+        response.raise_for_status()
         data = response.json()
 
-        # Formata os dados para uma estrutura mais simples para o frontend
         suggestions = []
         if data.get('features'):
             for feature in data['features']:
                 properties = feature['properties']
-                # A 'bbox' (bounding box) é crucial para centralizar o mapa
                 bbox = feature.get('bbox')
 
+                # <-- MUDANÇA AQUI: Adicionamos os campos que o frontend precisa
                 suggestions.append({
                     'text': properties.get('formatted'),
-                    'bbox': bbox
+                    'bbox': bbox,
+                    'city': properties.get('city'),
+                    'state_code': properties.get('state_code')
                 })
 
         return JsonResponse(suggestions, safe=False)

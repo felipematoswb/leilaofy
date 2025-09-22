@@ -1,189 +1,241 @@
+// static/js/mapa.js
+
+// Configura o HTMX para enviar o CSRF token do Django em todas as requisições POST
+htmx.on("htmx:configRequest", function (evt) {
+  const csrfToken = document.querySelector('input[name="csrfmiddlewaretoken"]');
+  if (csrfToken && evt.detail.verb !== "get") {
+    // Adiciona o token apenas para requisições não-GET
+    evt.detail.headers["X-CSRFToken"] = csrfToken.value;
+  }
+});
+
 document.addEventListener("DOMContentLoaded", function () {
-  // --- 1. ELEMENTOS DO DOM E VARIÁVEIS GLOBAIS ---
-  const mapContainer = document.getElementById("map");
-  const mapColumn = document.getElementById("map-column");
-  const toggleMapBtn = document.getElementById("toggle-map-btn");
-  const closeMapBtn = document.getElementById("close-map-btn");
+  const configElement = document.getElementById("map-config");
+  if (!configElement) {
+    console.error("Elemento de configuração #map-config não encontrado.");
+    return;
+  }
+  const config = JSON.parse(configElement.textContent);
 
-  const bboxInput = document.getElementById("bbox-input");
-  const filterForm = document.getElementById("filter-form");
-  const addressInput = document.getElementById("address-input");
-  const autocompleteList = document.getElementById("autocomplete-list");
+  // --- SETUP INICIAL E ÍCONES ---
+  const saoPauloCoords = [-23.5505, -46.6333];
+  const map = L.map("map", { maxZoom: 19, minZoom: 4 }).setView(
+    saoPauloCoords,
+    11
+  );
 
-  let markers = {};
-  let debounceTimer;
-
-  // --- 2. INICIALIZAÇÃO DO MAPA ---
-  // O mapa inicia em São Paulo com zoom.
-  const map = L.map(mapContainer).setView([-23.5505, -46.6333], 12);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution:
       '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19,
   }).addTo(map);
 
-  const markersLayer = L.layerGroup().addTo(map);
-
-  // --- 3. ÍCONES CUSTOMIZADOS ---
-  const defaultIcon = new L.Icon.Default();
-  const highlightIcon = new L.Icon({
+  const defaultIcon = new L.Icon({
     iconUrl:
-      "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png",
-    shadowUrl:
-      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png",
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-icon.png",
     iconSize: [25, 41],
     iconAnchor: [12, 41],
     popupAnchor: [1, -34],
+    shadowUrl:
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
     shadowSize: [41, 41],
   });
 
-  // --- 4. FUNÇÃO DE APOIO ---
-  function updateBboxInput() {
-    const bounds = map.getBounds();
-    bboxInput.value = `${bounds.getSouthWest().lat},${
-      bounds.getSouthWest().lng
-    },${bounds.getNorthEast().lat},${bounds.getNorthEast().lng}`;
+  const highlightIcon = new L.Icon({
+    iconUrl:
+      "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-red.png",
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowUrl:
+      "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
+    shadowSize: [41, 41],
+  });
+
+  // --- SELEÇÃO DE ELEMENTOS DO DOM ---
+  const form = document.getElementById("filter-form");
+  const bboxInput = document.getElementById("bbox-input");
+  const loadingIndicator = document.getElementById("loading");
+  const addressInput = document.getElementById("address-input");
+  const autocompleteList = document.getElementById("autocomplete-list");
+  const comarcaInput = document.getElementById("comarca-input");
+  const resultsContainer = document.getElementById("results-list");
+
+  // --- CAMADA DE MARCADORES E ESTADO ---
+  let markers = L.featureGroup().addTo(map);
+  let markerRegistry = {};
+  let fetchController = null;
+  let debounceTimeout = null;
+  let autocompleteDebounceTimeout = null;
+
+  // --- FUNÇÕES AUXILIARES ---
+  function removerAcentos(texto) {
+    if (!texto) return "";
+    return texto.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   }
 
-  // --- 5. CONTROLO DO MAPA POPUP (MOBILE) ---
-  toggleMapBtn.addEventListener("click", () => {
-    mapColumn.classList.add("visible");
-    setTimeout(() => {
-      map.invalidateSize();
-    }, 10);
-  });
-
-  closeMapBtn.addEventListener("click", () => {
-    mapColumn.classList.remove("visible");
-  });
-
-  // --- 6. LÓGICA DE AUTOCOMPLETE ---
-  addressInput.addEventListener("input", function (e) {
-    const query = e.target.value;
-    autocompleteList.innerHTML = "";
-    clearTimeout(debounceTimer);
-
-    if (query.length < 3) return;
-
-    debounceTimer = setTimeout(() => {
-      fetch(`/api/geocode-autocomplete/?text=${encodeURIComponent(query)}`)
-        .then((response) => response.json())
-        .then((data) => {
+  // --- LÓGICA DE AUTOCOMPLETE ---
+  async function handleAddressInput() {
+    const query = addressInput.value;
+    if (query.length < 3) {
+      autocompleteList.innerHTML = "";
+      if (comarcaInput.value) {
+        comarcaInput.value = "";
+        debouncedFetch();
+      }
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/geocode-autocomplete/?text=${encodeURIComponent(query)}`
+      );
+      const suggestions = await response.json();
+      autocompleteList.innerHTML = "";
+      suggestions.forEach((suggestion) => {
+        const item = document.createElement("div");
+        item.textContent = suggestion.text;
+        item.dataset.text = suggestion.text;
+        if (suggestion.bbox) item.dataset.bbox = suggestion.bbox.join(",");
+        item.dataset.city = suggestion.city || "";
+        item.dataset.stateCode = suggestion.state_code || "";
+        item.addEventListener("click", (e) => {
+          const clickedItem = e.currentTarget;
+          const city = clickedItem.dataset.city;
+          const stateCode = clickedItem.dataset.stateCode;
+          addressInput.value = clickedItem.dataset.text;
           autocompleteList.innerHTML = "";
-          if (data.error) {
-            console.error("API Autocomplete Error:", data.error);
-            return;
+          if (city && stateCode) {
+            const cidadeSemAcento = removerAcentos(city);
+            const comarca = `${cidadeSemAcento.toUpperCase()}-${stateCode.toUpperCase()}`;
+            comarcaInput.value = comarca;
+          } else {
+            comarcaInput.value = "";
           }
-          data.forEach((suggestion) => {
-            const item = document.createElement("div");
-            item.innerHTML = suggestion.text;
-            item.addEventListener("click", function () {
-              addressInput.value = suggestion.text;
-              autocompleteList.innerHTML = "";
-              if (suggestion.bbox) {
-                const bounds = [
-                  [suggestion.bbox[1], suggestion.bbox[0]],
-                  [suggestion.bbox[3], suggestion.bbox[2]],
-                ];
-                map.fitBounds(bounds);
-              }
-            });
-            autocompleteList.appendChild(item);
-          });
+          if (clickedItem.dataset.bbox) {
+            const bbox = clickedItem.dataset.bbox.split(",").map(Number);
+            map.flyToBounds([
+              [bbox[1], bbox[0]],
+              [bbox[3], bbox[2]],
+            ]);
+          } else {
+            fetchAndUpdate();
+          }
         });
-    }, 300);
+        autocompleteList.appendChild(item);
+      });
+    } catch (error) {
+      console.error("Autocomplete error:", error);
+    }
+  }
+
+  // --- FUNÇÃO PRINCIPAL DE BUSCA (O MAESTRO) ---
+  async function fetchAndUpdate() {
+    loadingIndicator.style.display = "block";
+    if (fetchController) fetchController.abort();
+    fetchController = new AbortController();
+    const signal = fetchController.signal;
+
+    const bounds = map.getBounds();
+    bboxInput.value = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+
+    const formData = new FormData(form);
+    const params = new URLSearchParams(formData);
+    const queryString = params.toString();
+
+    try {
+      const response = await fetch(`${config.geojsonUrl}?${queryString}`, {
+        signal,
+      });
+      if (!response.ok)
+        throw new Error("Network response was not ok for GeoJSON");
+      const geojsonData = await response.json();
+
+      markers.clearLayers();
+      markerRegistry = {};
+
+      const geoJsonLayer = L.geoJSON(geojsonData, {
+        pointToLayer: function (feature, latlng) {
+          return L.marker(latlng, { icon: defaultIcon });
+        },
+        onEachFeature: function (feature, layer) {
+          const props = feature.properties;
+          const imovelId = props.id;
+          markerRegistry[imovelId] = layer;
+          const detailUrl = props.detail_url || `/imovel/${imovelId}/`;
+          const popupContent = `
+                        <h5>${props.title}</h5>
+                        <b>Preço:</b> R$ ${
+                          props.price
+                            ? props.price.toLocaleString("pt-BR")
+                            : "N/A"
+                        }<br>
+                        <a href="${detailUrl}" target="_blank">Ver detalhes</a>
+                    `;
+          layer.bindPopup(popupContent);
+        },
+      });
+
+      markers.addLayer(geoJsonLayer);
+
+      htmx.trigger(form, "updateSidebar");
+    } catch (error) {
+      if (error.name !== "AbortError") console.error("Fetch error:", error);
+    } finally {
+      htmx.on("htmx:afterRequest", () => {
+        loadingIndicator.style.display = "none";
+      });
+      if (document.querySelector(".htmx-request") === null)
+        loadingIndicator.style.display = "none";
+    }
+  }
+
+  // --- FUNÇÃO DE DEBOUNCE ---
+  function debouncedFetch() {
+    clearTimeout(debounceTimeout);
+    debounceTimeout = setTimeout(fetchAndUpdate, 500);
+  }
+
+  // --- EVENT LISTENERS ---
+  map.on("moveend", debouncedFetch);
+  form.addEventListener("change", debouncedFetch);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    debouncedFetch();
+  });
+
+  addressInput.addEventListener("input", () => {
+    clearTimeout(autocompleteDebounceTimeout);
+    autocompleteDebounceTimeout = setTimeout(handleAddressInput, 300);
   });
 
   document.addEventListener("click", (e) => {
-    if (e.target !== addressInput) autocompleteList.innerHTML = "";
-  });
-
-  // --- 7. FUNÇÃO DE SINCRONIZAÇÃO DE MAPA E LISTA ---
-  function syncMapAndList() {
-    markersLayer.clearLayers();
-    markers = {};
-    const cards = document.querySelectorAll(".result-card");
-    cards.forEach((card) => {
-      const imovelId = card.dataset.imovelId;
-      const lat = card.dataset.lat;
-      const lng = card.dataset.lng;
-      const title = card.dataset.title;
-
-      if (lat && lng) {
-        const latNum = parseFloat(lat.replace(",", "."));
-        const lngNum = parseFloat(lng.replace(",", "."));
-        const marker = L.marker([latNum, lngNum], { icon: defaultIcon });
-        marker.bindPopup(`<b>${title}</b>`);
-        marker.on("click", () => {
-          const cardElement = document.querySelector(
-            `a > .result-card[data-imovel-id="${imovelId}"]`
-          );
-          if (cardElement) {
-            cardElement.scrollIntoView({ behavior: "smooth", block: "center" });
-            cardElement.classList.add("highlight");
-            setTimeout(() => cardElement.classList.remove("highlight"), 2000);
-
-            if (mapColumn.classList.contains("visible")) {
-              closeMapBtn.click();
-            }
-          }
-        });
-        markers[imovelId] = marker;
-        markersLayer.addLayer(marker);
-      }
-
-      const linkElement = card.closest("a");
-      if (linkElement) {
-        linkElement.addEventListener("mouseover", () => {
-          if (markers[imovelId])
-            markers[imovelId].setIcon(highlightIcon).setZIndexOffset(1000);
-        });
-        linkElement.addEventListener("mouseout", () => {
-          if (markers[imovelId])
-            markers[imovelId].setIcon(defaultIcon).setZIndexOffset(0);
-        });
-      }
-    });
-  }
-
-  // --- 8. EVENTOS PRINCIPAIS DO HTMX E MAPA ---
-
-  // Interceta a requisição ANTES que ela seja enviada
-  document.body.addEventListener("htmx:configRequest", function (evt) {
-    if (evt.detail.elt.id === "filter-form") {
-      updateBboxInput();
-      addressInput.disabled = true;
+    if (!e.target.closest(".autocomplete-container")) {
+      autocompleteList.innerHTML = "";
     }
   });
 
-  // Roda DEPOIS que a requisição termina
-  document.body.addEventListener("htmx:afterRequest", function (evt) {
-    if (evt.detail.elt.id === "filter-form") {
-      addressInput.disabled = false;
+  resultsContainer.addEventListener("mouseover", (e) => {
+    const card = e.target.closest(".result-card");
+    if (!card) return;
+    const imovelId = card.dataset.imovelId;
+    const marker = markerRegistry[imovelId];
+    if (marker) {
+      marker.setIcon(highlightIcon);
     }
   });
 
-  // Dispara a busca sempre que o mapa para de se mover
-  map.on("moveend", () => {
-    htmx.trigger("#filter-form", "submit");
-  });
-
-  // Sincroniza o mapa após o HTMX atualizar a lista
-  document.body.addEventListener("htmx:afterSwap", (event) => {
-    if (
-      event.detail.target.id === "results-column" ||
-      event.detail.target.id === "results-list"
-    ) {
-      syncMapAndList();
+  resultsContainer.addEventListener("mouseout", (e) => {
+    const card = e.target.closest(".result-card");
+    if (!card) return;
+    const imovelId = card.dataset.imovelId;
+    const marker = markerRegistry[imovelId];
+    if (marker) {
+      marker.setIcon(defaultIcon);
     }
   });
 
-  // --- 9. EXECUÇÃO INICIAL (CORRIGIDA) ---
-
-  // CORREÇÃO: Garante que o Bbox inicial seja o de São Paulo ANTES de qualquer busca.
-  updateBboxInput();
-
-  // Dispara a busca inicial assim que o mapa estiver pronto.
-  map.whenReady(() => {
-    htmx.trigger("#filter-form", "submit");
-  });
+  // --- CARGA INICIAL ---
+  // Antes: map.whenReady(fetchAndUpdate);
+  // Agora: dispara a primeira busca manualmente
+  fetchAndUpdate();
 });

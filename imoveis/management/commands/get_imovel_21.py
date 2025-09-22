@@ -55,10 +55,10 @@ class Command(BaseCommand):
     help = 'Executa o processo completo de scraping (lista e detalhes) dos imóveis da Caixa.'
 
     def handle(self, *args, **options):
-        estados_brasil = ['PR', 'PE', 'PI', 'RJ']
+        # estados_brasil = ['PR', 'PE', 'PI', 'RJ']
 
-        # estados_brasil = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
-        #                   'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
+        estados_brasil = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS',
+                          'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO']
 
         self.stdout.write(self.style.SUCCESS(
             'Iniciando processo unificado de scraping...'))

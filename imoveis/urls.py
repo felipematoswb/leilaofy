@@ -4,6 +4,7 @@ from django.views.generic import RedirectView
 from .views import (
     favoritos_page_view,
     geocode_autocomplete_api,
+    imoveis_geojson_view,
     imovel_standalone_detail_view,
     mapa_view,
     lista_imoveis_partial,
@@ -20,14 +21,13 @@ urlpatterns = [
          name='lista-imoveis-partial'),
     path('imovel-detalhe/<int:pk>/', imovel_detail_partial,
          name='imovel-detail-partial'),
-    path('imovel/<int:pk>/toggle_favorito/',
+    path('imovel/<int:pk>/toggle-favorito/',
          toggle_favorito_view, name='toggle-favorito'),
-    path('meus-favoritos/', favoritos_page_view,
-         name='meus-favoritos'),
+    path('favoritos/', favoritos_page_view, name='favoritos-page'),
     path('imovel/<int:pk>/', imovel_standalone_detail_view,
          name='imovel-detail-page'),
     path('salvar-busca/', salvar_busca_view, name='salvar-busca'),
     path('api/geocode-autocomplete/', geocode_autocomplete_api,
          name='geocode-autocomplete-api'),
-
+    path('mapa/geojson/', imoveis_geojson_view, name='imoveis-geojson'),
 ]
